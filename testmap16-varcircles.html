@@ -82,7 +82,7 @@ function loadLines () {
 }
 
 function loadLineTimes () {
-    var url = 'http://rgiersig.github.io/IsochroneMap/lines+times.csv';
+    var url = 'lines+times.csv';
     console.log("loading lines from " + url);
     $.ajax({
         dataType: "text csv json",
@@ -90,7 +90,7 @@ function loadLineTimes () {
         //data: null,
         //async: false,
     }).done(function(lines) {
-        console.log(lines);
+        //console.log(lines);
 	$.each(lines, function (index, line) {
 	    isochrone.lineTimes[line["BEZEICHNUNG"]] = line;
 	});
