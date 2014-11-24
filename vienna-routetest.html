@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<!--
+https://open.wien.at/site/datensatz/?id=add66f20-d033-4eee-b9a0-47019828e698
+http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv
+https://github.com/anomal/RainbowVis-JS
+-->
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false&libraries=geometry,visualisation">
+    </script>
+    <!--<script type="text/javascript"
+      src="https://rawgithub.com/anomal/RainbowVis-JS/master/rainbowvis.js">
+    </script>-->
+    <!--<script type="text/javascript"
+      src="http://rgiersig.github.io/IsochroneMap/rainbowvis.js">
+    </script>-->
+    <script type="text/javascript"
+      src="rainbowvis.js">
+    </script>
+    <script type="text/javascript"
+      src="http://google-maps-utility-library-v3.googlecode.com/svn/tags/markerclustererplus/2.0.9/src/markerclusterer_packed.js">
+    </script>
+    <script type="text/javascript">
+    // Enable the visual refresh
+    google.maps.visualRefresh = true;
+
+var distance = google.maps.geometry.spherical.computeDistanceBetween;
+
+var isochrone = new Object;
+isochrone.map = null;
+isochrone.markerClusterer = null;
+isochrone.marker = null;
+isochrone.circles = new Array;
+isochrone.stops = {};
+isochrone.distances = {};
+isochrone.sortedStopList = new Array;
+isochrone.stopArrivalMinute = undefined;
+isochrone.lineId2Name = {};
+isochrone.lineName2Id = {};
+isochrone.lineTimes = {};
+isochrone.defaultTimes = {BEZEICHNUNG: "default",
+			  Gesamtfahrzeit: 2,
+			  NrStationen: 1,
+			  MinWT: 5,
+			  MaxWT: 10,
+			  MinWE: 10,
+			  MaxWE: 15,
+			  NightWT: 999,
+			  NightWE: 999,
+			 };
+isochrone.lineType = {};
+isochrone.travelCircles = new Array;
+isochrone.rainbow = new Rainbow;
+isochrone.opacity = 1;
+isochrone.walkingSpeed = 0;
+isochrone.Granularity = 0;
+isochrone.maxTime = 0;
+isochrone.variant = 0;
+isochrone.radiusDelta = 0;
+isochrone.nrCircles = 0;
+
+$.ajaxSetup({
+  contents: {
+    csv: /csv/
+  },
+  converters: {
+    "text csv": true,
+    "csv json": function ( result ) {
+      return $.csv.toObjects(result, { separator: ';' });
+    },
+  }
+});
+
+function initialize() {
+    isochrone.map = new google.maps.Map(document.getElementById("map_canvas"),{
+	center: new google.maps.LatLng(48.2022923873588, 16.3695630750926),
+	zoom: 11,
+	mapTypeId: google.maps.MapTypeId.ROADMAP,
+    });
+    isochrone.markerClusterer = new MarkerClusterer(isochrone.map, [], { gridSize: 60,
+									 minimumClusterSize: 4,
+									 title: "Stops",
+									 ignoreHidden: true,
+									 maxZoom: 13,
+								       });
+
+    loadLines()
+}
+
+function loadLines () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    isochrone.lineId2Name[line["LINIEN_ID"]] = line["BEZEICHNUNG"];
+	    //isochrone.lineName2Id[line["BEZEICHNUNG"]] = line["LINIEN_ID"];
+	    //isochrone.lineType[line["LINIEN_ID"]] = line["VERKEHRSMITTEL"];
+	});
+        //console.log(isochrone.lineName2Id);
+        //console.log(isochrone.lineType);
+        //loadStops();
+	loadLineTimes();
+    });
+}
+
+function loadLineTimes () {
+    var url = 'lines+times_20131026.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    $.each(line, function (k, v) {
+		if (k != "BEZEICHNUNG") {
+		    if (v == "") {
+			line[k] = 999;
+		    } else {
+			line[k] = parseInt(v);
+		    }
+		}
+	    });
+	    line["ZeitProStation"] = line["Gesamtfahrzeit"] / line["NrStationen"];
+	    isochrone.lineTimes[line["BEZEICHNUNG"]] = line;
+	});
+        //console.log(isochrone.lineTimes);
+	loadStops();
+    });
+}
+
+function loadStops () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv';
+    console.log("loading stops from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(stops) {
+        //console.log(stops);
+	//$.csv.toObjects(stops, { separator: ';' });
+	$.each(stops, function (index, stop) {
+	    var s = new Object;
+	    s.position = new google.maps.LatLng(stop.WGS84_LAT,
+						stop.WGS84_LON);
+	    s.id = stop["HALTESTELLEN_ID"];
+	    s.name = stop["NAME"];
+	    s.travelTime = 999;
+	    s.drawCircles = false;
+	    s.marker = new google.maps.Marker({
+		position: s.position,
+		//map: isochrone.map,
+		draggable: false,
+		//animation: google.maps.Animation.DROP,
+		title: s.name,
+		visible: false,
+		icon: {
+		    path: google.maps.SymbolPath.CIRCLE,
+		    scale: 4,
+		},
+	    });
+	    isochrone.markerClusterer.addMarker(s.marker);
+	    s.lines = {};
+	    isochrone.stops[s.id] = s;
+	});
+        //console.log(isochrone.stops);
+	loadConnections();
+    });
+}
+
+function loadConnections () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv';
+    console.log("loading connections from " + url);
+    $.ajax({
+        dataType: "text",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(csv) {
+	//$.csv.toObjects(conns, { separator: ';' });
+	//var conns = $.csv.parsers.splitLines(csv, { separator: ';' });
+	var conns = csv.trim().split("\n");
+	//console.log(conns);
+	var firstLine = conns.shift().trim();
+	var knownHeader = '"STEIG_ID";"FK_LINIEN_ID";"FK_HALTESTELLEN_ID";"RICHTUNG";"REIHENFOLGE";"RBL_NUMMER";"BEREICH";"STEIG";"STEIG_WGS84_LAT";"STEIG_WGS84_LON";"STAND"';
+	var l;
+	if (firstLine == knownHeader) {
+	    console.log("connections header matches");
+	    var prevconn;
+	    $.each(conns, function (index, conncsv) {
+		var conn = $.csv.toObjects(firstLine+"\n"+conncsv.trim(), { separator: ';' })[0];
+		//if (index < 10) {
+		    //console.log(index);
+		    //console.log(prevconn);
+		    //console.log(conn);
+		    if (prevconn) {
+			//console.log('"'+prevconn.FK_LINIEN_ID+'" == "'+conn.FK_LINIEN_ID+'": '+(prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID));
+			//console.log('"'+prevconn.RICHTUNG+'" == "'+conn.RICHTUNG+'": '+(prevconn.RICHTUNG == conn.RICHTUNG));
+			//console.log('"'+prevconn.REIHENFOLGE+'" + 1 == "'+conn.REIHENFOLGE+'": '+(parseInt(prevconn.REIHENFOLGE, 10) + 1 == parseInt(conn.REIHENFOLGE)));
+			if (prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID
+			    && prevconn.RICHTUNG == conn.RICHTUNG
+			    && parseInt(prevconn.REIHENFOLGE) + 1 == parseInt(conn.REIHENFOLGE)
+			    && prevconn.FK_HALTESTELLEN_ID != conn.FK_HALTESTELLEN_ID
+			   ) {
+			    //console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+			    l = isochrone.lineId2Name[prevconn.FK_LINIEN_ID];
+			    if (!isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[l]) {
+				    isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[l] = new Array;
+			    }
+			    isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[l].push(conn.FK_HALTESTELLEN_ID);
+			}
+			//console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+		    }
+		//}
+		prevconn = conn;
+	    });
+	} else {
+	    console.log("connections header mismatch!! '"+knownHeader+"' != '"+firstLine+"'");
+	}
+        //console.log(isochrone.stops);
+	paintMarker();
+    });
+}
+
+function paintMarker() {
+
+    isochrone.marker = new google.maps.Marker({
+	position: isochrone.map.getCenter(),
+	map: isochrone.map,
+	draggable: true,
+	animation: google.maps.Animation.DROP,
+	title: '???',
+	//icon: "https://chart.googleapis.com/chart?chst=d_map_pin_letter&chld=*|00ffff|000000",
+    });
+
+    google.maps.event.addListener(isochrone.marker, 'dragstart', hideStops);
+    google.maps.event.addListener(isochrone.marker, 'dragend', showStopsByTraveltime);
+
+    changeParams();
+
+    $('#WalkingSpeed').change(changeParams);
+    $('#Granularity').change(changeParams);
+    $('#MaxTime').change(changeParams);
+    $('#Variant').change(changeParams);
+
+    console.log("end initialize()");
+} // end initialize()
+
+
+
+function hideStops () {
+    $.each(isochrone.travelCircles, function (i, c) {
+	c.setVisible(false);
+    });
+    $.each(isochrone.stops, function (i, s) {
+	//s.marker.setVisible(false);
+    });
+}
+
+function showStopsByTraveltime() {
+    $("#debug_canvas").empty();
+    $("#debug_canvas").append("Circle radius: " + isochrone.radiusDelta.toFixed(0) + "m <br>");
+    var pos = isochrone.marker.getPosition();
+    var sortedStops = new Array;
+    $.each(isochrone.stops, function (stopId, stop) {
+	var d = distance(pos, stop.position)/1000/isochrone.walkingSpeed*60; // distance in walking minutes
+	stop.travelTime = d;
+	stop.travelLine = undefined;
+	//stop.marker.setVisible(true);
+	stop.marker.title = stop.name+" ("+d+")";
+	stop.showCircles = false;
+        sortedStops.push(stop);
+    });
+    sortedStops.sort(function(a, b) { return a.travelTime - b.travelTime; });
+    isochrone.marker.setTitle("nearest stop: " + sortedStops[0].name);
+
+    $("#debug_canvas").append("Adjusting fastest connections...<br>");
+    var t;
+    var dt;
+    var connstop;
+    function moveStops() {
+	var cnt = 0;
+	$.each(sortedStops, function (i, stop) {
+	    // go through connections
+            $.each(stop.lines, function(lineId, connstops) {
+		t = isochrone.lineTimes[lineId];
+		if (!t) {
+		    console.log("No time information for line " + lineId + ", using default...", t, isochrone.lineTimes)
+		    t = isochrone.defaultTimes;
+		}
+		dt = stop.travelTime + t["ZeitProStation"];
+		if (!stop.travelLine || stop.travelLine != lineId) {
+		    dt += t[isochrone.variant];
+		}
+		$.each(connstops, function(j, connstopId) {
+		    connstop = isochrone.stops[connstopId];
+		    //console.log("  Comparing: "+connstop.travelTime+" > "+dt+"? ", connstop);
+		    if (connstop.travelTime > dt) {
+			//console.log("Moving "+connstop.name+ " to "+dt+" minutes...");
+			connstop.travelLine = lineId;
+			connstop.travelTime = dt;
+			connstop.marker.title = connstop.name+" ("+dt+" via "+connstop.travelLine+")+";
+			connstop.showCircles = true;
+			cnt++;
+		    }
+		});
+            });
+	});
+	$("#debug_canvas").append(" "+cnt+" left...");
+	return cnt;		      
+    }
+    var cnt = 1;
+    while (cnt > 0) {
+	cnt = moveStops();
+	sortedStops.sort(function(a, b) { return a.travelTime - b.travelTime; });
+    }
+
+    var stop1;
+    var stop2;
+    var dist;
+    var cnt = 0;
+    for (var i = 0; sortedStops[i].travelTime < isochrone.maxTime && i < sortedStops.length; i++) {
+	stop1 = sortedStops[i];
+	for (var j = i+1; j < sortedStops.length && sortedStops[j].travelTime < isochrone.maxTime; j++) {
+	    stop2 = sortedStops[j];
+	    if (!isochrone.distances[stop1.id]) {
+		isochrone.distances[stop1.id] = new Object;
+	    }
+	    dist = isochrone.distances[stop1.id][stop2.id];
+	    if (!dist) {
+		dist = distance(stop1.position, stop2.position);
+		isochrone.distances[stop1.id][stop2.id] = dist;
+		if (!isochrone.distances[stop2.id]) {
+		    isochrone.distances[stop2.id] = new Object;
+		}
+		isochrone.distances[stop2.id][stop1.id] = dist;
+	    }
+	    dt = dist/1000/isochrone.walkingSpeed*60;
+	    if (stop1.travelTime + dt < stop2.travelTime) {
+		//console.log("Stop "+stop2.name+" covered by "+stop1.name, stop1.travelTime, dt, stop2.travelTime);
+		stop2.marker.title = stop2.name+" ("+stop2.travelTime+" via "+stop2.travelLine+")-";
+		stop2.showCircles = false;
+		cnt++;
+	    }
+	}
+    }
+    $("#debug_canvas").append("<br>Ignoring "+cnt+" stops that can be reached faster on foot.<br>");
+    isochrone.rainbow.setNumberRange(0, isochrone.maxTime);
+
+    isochrone.travelCircles.length = 0; // delete circles
+    var i;
+    var t;
+    for (i = 1, t = 0; t < isochrone.maxTime; i++, t+=isochrone.Granularity) {
+        isochrone.travelCircles.push(
+	    new google.maps.Circle({
+                clickable: false,
+                strokeColor: '#000000',//+isochrone.rainbow.colourAt(t),
+                strokeOpacity: 0,
+                strokeWeight: 0,
+                fillColor: '#'+isochrone.rainbow.colourAt(t),
+                fillOpacity: isochrone.opacity, //1/(isochrone.nrCircles+1),
+                map: isochrone.map,
+                radius: isochrone.radiusDelta * i, // meter
+		center: pos,
+		visible: true,
+		zIndex: 10000-Math.floor(t),
+	    })
+        );
+    }
+    
+    console.log("Painting stop rings...");
+    cnt = 0;
+    if (1) {
+	$.each(isochrone.stops, function (stopId, stop) {
+	    if ((stop.travelTime < isochrone.maxTime) && stop.showCircles) {
+		for (i=1, t=stop.travelTime; t < isochrone.maxTime; i++, t+=isochrone.Granularity) {
+		    isochrone.travelCircles.push(
+			new google.maps.Circle({
+			    clickable: false,
+			    strokeColor: '#000000',//+isochrone.rainbow.colourAt(t),
+			    strokeOpacity: 0,
+			    strokeWeight: 0,
+			    fillColor: '#'+isochrone.rainbow.colourAt(t),
+			    fillOpacity: isochrone.opacity,//1/(isochrone.nrCircles+1),
+			    map: isochrone.map,
+			    radius: isochrone.radiusDelta * i, // meter
+			    center: stop.position,
+			    visible: false,
+			    zIndex: 10000-Math.floor(t),
+			})
+		    );
+		    cnt++;
+		}
+	    }
+	});
+    }
+    if (0) {
+	$.each(isochrone.stops, function (stopId, stop) {
+	    if ((stop.travelTime < isochrone.maxTime) && stop.showCircles) {
+		t = stop.travelTime;
+		i = (isochrone.maxTime - stop.travelTime) * isochrone.walkingSpeed * 1000 / 60;
+		isochrone.travelCircles.push(
+		    new google.maps.Circle({
+			clickable: false,
+			strokeColor: '#'+isochrone.rainbow.colourAt(t),
+			strokeOpacity: 0.5,
+			strokeWeight: 3,
+			fillColor: '#'+isochrone.rainbow.colourAt(t),
+			fillOpacity: 0,//isochrone.opacity,//1/(isochrone.nrCircles+1),
+			map: isochrone.map,
+			radius: i, // meter
+			center: stop.position,
+			visible: true,
+			zIndex: 10000-Math.floor(t),
+		    })
+		);
+		cnt++;
+	    }
+	});
+    }
+    //$("#debug_canvas").append("Circles shown: "+isochrone.travelCircles.length+"<br>");
+    showStopCircles();
+}
+
+function changeParams() {
+    //console.log(this.name + " is now " + this.value);
+    isochrone.walkingSpeed = parseFloat($('#WalkingSpeed')[0].value);
+    isochrone.Granularity = parseInt($('#Granularity')[0].value);
+    isochrone.maxTime = parseInt($('#MaxTime')[0].value);
+    isochrone.variant = $('#Variant')[0].value;
+    isochrone.radiusDelta = isochrone.walkingSpeed * 1000 * isochrone.Granularity / 60;
+    isochrone.nrCircles = isochrone.maxTime / isochrone.Granularity;
+    hideStops();
+    showStopsByTraveltime();		    
+}
+
+function hideStopCircles() {
+    $("#debug_canvas").append("Circles now hidden.<br>");
+    $.each(isochrone.travelCircles, function(i, c) {
+	c.setVisible(false);
+    });
+}
+function showStopCircles() {
+    $("#debug_canvas").append("Circles shown: "+isochrone.travelCircles.length+"<br>");
+    $.each(isochrone.travelCircles, function(i, c) {
+	c.setVisible(true);
+    });
+    isochrone.markerClusterer.repaint();
+}
+
+function hideStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(false);
+    });
+    isochrone.markerClusterer.repaint();
+}
+function showStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(true);
+    });
+    isochrone.markerClusterer.repaint();
+}
+
+</script>
+    </head>
+    <body onload="initialize()">
+      <div id="config_canvas" style="width:300px; height:100%; float:left">
+	<!--<form id="config" onSubmit="return false">-->
+	  Walking speed: <input type="text" id="WalkingSpeed" name="WalkingSpeed" size="2" value="4">km/h 
+	  <nbsp;><nbsp;><nbsp;><nbsp;><br>
+	  Granularity in minutes: 
+	  <select id="Granularity" name="Granularity">
+	    <option value="5">5</option>
+	    <option value="10">10</option>
+	    <option value="15" selected>15</option>
+	  </select>
+	  <nbsp;><nbsp;><nbsp;><nbsp;><br>
+	  Maximum travel time: 
+	  <select id="MaxTime" name="MaxTime">
+	    <option value="30">30</option>
+	    <option value="60" selected>60</option>
+	    <option value="90">90</option>
+	    <option value="120">120</option>
+	  </select>
+	  </br>
+	  Travel parameters:<br>
+	  <select id="Variant" name="Variant">
+	    <option value="MinWT" selected>Minimum Weekday</option>
+	    <option value="MaxWT">Maximum Weekday</option>
+	    <option value="MinWE">Minimum Weekend</option>
+	    <option value="MaxWE">Maximum Weekend</option>
+	    <option value="NightWT">Night Weekday</option>
+	    <option value="NightWE">Night Weekend</option>
+          </select>
+          <br>
+          <button id="showStopCircles" onClick="showStopCircles()">show Circles</button>
+          <button id="hideStopCircles" onClick="hideStopCircles()">hide Circles</button>
+          <br>
+          <button id="showStopMarkers" onClick="showStopMarkers()">show Stops</button>
+          <button id="hideStopMarkers" onClick="hideStopMarkers()">hide Stops</button>
+          <br>
+	<!--</form>-->
+      <div id="debug_canvas" style="width:100%; height:100%">
+	Debug log:<br>
+      </div>
+      </div>
+      <div id="map_canvas" style="height:100%"></div>
+    </body>
+</html>

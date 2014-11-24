@@ -173,4 +173,3 @@ function ColourGradient()
 		}
 	}
 }
-
