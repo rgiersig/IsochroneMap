@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false">
+    </script>
+
+    <script type="text/javascript">
+      // Enable the visual refresh
+      google.maps.visualRefresh = true;
+      var map;
+      function initialize() {
+        var map = new google.maps.Map(document.getElementById("map_canvas"),{
+          center: new google.maps.LatLng(48.206829, 16.376324),
+          zoom: 12,
+          mapTypeId: google.maps.MapTypeId.ROADMAP
+        });
+        console.log("outercircle");
+        var outercircle = new google.maps.Circle({
+          clickable: false,
+          strokeColor: '#FF0000',
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: '#FF0000',
+          fillOpacity: 0.35,
+          map: map,
+          radius: 100, // meter
+          center: new google.maps.LatLng(48.206828, 16.376323),
+          visible: true,
+          zIndex: 1,
+        });
+        console.log("innercircle");
+        var innercircle = new google.maps.Circle({
+          clickable: false,
+          strokeColor: '#000000',
+          strokeOpacity: 0.8,
+          strokeWeight: 1,
+          fillColor: '#00FF00',
+          fillOpacity: 1, //0.35,
+          map: map,
+          radius: 50, // meter
+          center: new google.maps.LatLng(48.206828, 16.376323),
+          visible: true,
+          zIndex: 2,
+        });
+        //return;    
+        var circles = new Array;
+        var stopurl = 'http://data.wien.gv.at/daten/wfs?service=WFS&request=GetFeature&version=1.1.0&typeName=ogdwien:OEFFHALTESTOGD&srsName=EPSG:4326&outputFormat=json';
+        // var stopurl = 'haltestellen.json';
+        $.getJSON(stopurl, function(stops) {
+          console.log(stops);
+          console.log(map);
+          $.each(stops.features, function (index, stop) {
+            if (index > 100) { return; }
+            console.log(stop);
+            var circle = new google.maps.Circle({
+              clickable: false,
+              strokeColor: '#0000FF',
+              strokeOpacity: 0.8,
+              strokeWeight: 2,
+              fillColor: '#FF00FF',
+              fillOpacity: 0.35,
+              map: map,
+              radius: 100, // meter
+              center: new google.maps.LatLng(stop.geometry.coordinates[1],
+                                             stop.geometry.coordinates[0]),
+              visible: true,
+              zIndex: 1,
+            });
+            circles.push(circle);
+          });
+          console.log("circles = " + circles.length);
+          console.log(map);
+        });
+
+        console.log("end initialize()");
+      } // end initialize()
+    </script>
+  </head>
+  <body onload="initialize()">
+    <div id="map_canvas" style="width:100%; height:100%"></div>
+  </body>
+</html>

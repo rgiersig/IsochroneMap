@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    </style>
+    <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false">
+    </script>
+    <script type="text/javascript">
+      var map;
+      function initialize() {
+        var map = new google.maps.Map(document.getElementById("map_canvas"),{
+          center: new google.maps.LatLng(48.206829, 16.376324),
+          zoom: 11,
+          mapTypeId: google.maps.MapTypeId.ROADMAP
+        });
+
+        var circle = new google.maps.Circle({
+          clickable: false,
+          strokeColor: '#FF0000',
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: '#FF0000',
+          fillOpacity: 0.35,
+          map: map,
+          radius: 100, // meter
+          center: new google.maps.LatLng(48.206828, 16.376323),
+          visible: true,
+          zIndex: 1,
+        });
+        var innercircle = new google.maps.Circle({
+          clickable: false,
+          strokeColor: '#00FF00',
+          strokeOpacity: 0.8,
+          strokeWeight: 2,
+          fillColor: '#00FF00',
+          fillOpacity: 1, //0.35,
+          map: map,
+          radius: 50, // meter
+          center: new google.maps.LatLng(48.206828, 16.376323),
+          visible: true,
+          zIndex: 2,
+        });
+
+        return;    
+        var circles = [];
+        var stopurl = 'http://data.wien.gv.at/daten/wfs?service=WFS&request=GetFeature&version=1.1.0&typeName=ogdwien:HALTESTELLEWLOGD&srsName=EPSG:4326&outputFormat=json';
+        // var stopurl = 'haltestellen.json';
+        $.getJSON(stopurl, function(data) {
+          var stops = data["features"];
+          $.each(stops, function (stop) {
+            //stop.geometry.coordinates
+            var circle = new google.maps.Circle({
+              clickable: false,
+              strokeColor: '#FF0000',
+              strokeOpacity: 0.8,
+              strokeWeight: 2,
+              fillColor: '#FF0000',
+              fillOpacity: 0.25,
+              map: map,
+              radius: 100, // meter
+              center: new google.maps.LatLng(stop.geometry.coordinates[0],
+                                             stop.geometry.coordinates[1]),
+              visible: true,
+              zIndex: 1,
+            });
+          });
+        });
+
+      } // end initialize()
+    </script>
+  </head>
+  <body onload="initialize()">
+    <div id="map_canvas" style="width:100%; height:100%"></div>
+  </body>
+</html>

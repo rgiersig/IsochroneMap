@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<!--
+https://open.wien.at/site/datensatz/?id=add66f20-d033-4eee-b9a0-47019828e698
+http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv
+https://github.com/anomal/RainbowVis-JS
+-->
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    .GMAPS_OVERLAY {
+	border-width: 0px;
+	border: none;
+	position:absolute;
+	padding:0px 0px 0px 0px;
+	margin:0px 0px 0px 0px;
+    }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false&libraries=geometry,visualisation">
+    </script>
+    <!--<script type="text/javascript"
+      src="https://rawgithub.com/anomal/RainbowVis-JS/master/rainbowvis.js">
+    </script>-->
+    <!--<script type="text/javascript"
+      src="http://rgiersig.github.io/IsochroneMap/rainbowvis.js">
+    </script>-->
+    <script type="text/javascript"
+      src="rainbowvis.js">
+    </script>
+    <script type="text/javascript"
+      src="http://google-maps-utility-library-v3.googlecode.com/svn/tags/markerclustererplus/2.0.9/src/markerclusterer_packed.js">
+    </script>
+<script type="text/javascript">
+    // Enable the visual refresh
+    google.maps.visualRefresh = true;
+
+var distance = google.maps.geometry.spherical.computeDistanceBetween;
+var offset = google.maps.geometry.spherical.computeOffset;
+
+var isochrone = new Object;
+isochrone.map = null;
+isochrone.markerClusterer = null;
+isochrone.marker = null;
+isochrone.customMapCanvas = null;
+isochrone.visible = true;
+isochrone.circles = new Array;
+isochrone.stopsStatic = {};
+isochrone.stops = {};
+isochrone.sortedStopList = new Array;
+isochrone.stopArrivalMinute = undefined;
+isochrone.lineId2Name = {};
+isochrone.lineName2Id = {};
+isochrone.lineTimes = {};
+isochrone.defaultTimes = {BEZEICHNUNG: "default",
+			  Gesamtfahrzeit: 2,
+			  NrStationen: 1,
+			  MinWT: 5,
+			  MaxWT: 10,
+			  MinWE: 10,
+			  MaxWE: 15,
+			  NightWT: 999,
+			  NightWE: 999,
+			 };
+isochrone.lineType = {};
+isochrone.rainbow = new Rainbow;
+isochrone.opacity = 1;
+isochrone.walkingSpeed = 0;
+isochrone.Granularity = 0;
+isochrone.maxTime = 0;
+isochrone.variant = 0;
+isochrone.radiusDelta = 0;
+isochrone.nrCircles = 0;
+
+$.ajaxSetup({
+  contents: {
+    csv: /csv/
+  },
+  converters: {
+    "text csv": true,
+    "csv json": function ( result ) {
+      return $.csv.toObjects(result, { separator: ';' });
+    },
+  }
+});
+
+//**********************************************************************
+var CanvasOverlay = function(map, drawFunction) {
+    this.canvas           = document.createElement("CANVAS");
+    this.canvas.className = "GMAPS_OVERLAY";
+    this.ctx              = null;
+    this.tempCanvas           = document.createElement("CANVAS");
+    this.tempCanvas.className = "GMAPS_OVERLAY";
+    this.tempCtx              = null;
+    this.map              = map;
+    this.canvasDraw       = drawFunction;
+    var div = map.getDiv();
+    this.canvas.height    = div.height;
+    this.canvas.width     = div.width;
+    this.canvas.style.visibility = 'visible';
+    this.tempCanvas.height    = div.height;
+    this.tempCanvas.width     = div.width;
+    this.tempCanvas.style.display = 'none';
+    
+    this.setMap(map);
+};
+CanvasOverlay.prototype = new google.maps.OverlayView();
+
+CanvasOverlay.prototype.onAdd = function() {
+    console.log("onAdd called");
+    this.getPanes().overlayLayer.appendChild(this.canvas);
+    this.ctx = this.canvas.getContext("2d");
+    this.tempCtx = this.tempCanvas.getContext("2d");
+    this.draw();
+};
+
+CanvasOverlay.prototype.onRemove = function() {
+    this.canvas.parentNode.removeChild(this.canvas);
+    this.canvas = null;
+    this.ctx = null;
+    this.tempCanvas = null;
+    this.tempCtx = null;
+};
+
+//CanvasOverlay.prototype.drawLine = function(p1, p2) {
+//    this.ctx.beginPath();
+//    this.ctx.moveTo( p1.x, p1.y );
+//    this.ctx.lineTo( p2.x, p2.y );
+//    this.ctx.closePath();
+//    this.ctx.stroke();
+//};
+
+CanvasOverlay.prototype.canvasClear = function() {
+    // Clear the Canvas
+    if (this.ctx) {
+	this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+};
+   
+CanvasOverlay.prototype.draw = function() {
+    if (! this.canvas) {
+	return;
+    }
+    var projection = this.getProjection();
+    
+    // Shift and size the Canvas
+    var div = this.map.getDiv();
+    this.canvas.height    = div.offsetHeight;
+    this.canvas.width     = div.offsetWidth;
+    this.tempCanvas.height    = div.offsetHeight;
+    this.tempCanvas.width     = div.offsetWidth;
+    var centerPoint = projection.fromLatLngToDivPixel(this.map.getCenter());
+    this.canvas.style.left = (centerPoint.x - this.canvas.width  / 2) + "px";
+    this.canvas.style.top  = (centerPoint.y - this.canvas.height / 2) + "px";
+    this.tempCanvas.style.left = (centerPoint.x - this.canvas.width  / 2) + "px";
+    this.tempCanvas.style.top  = (centerPoint.y - this.canvas.height / 2) + "px";
+    //console.log(this);
+    //this.ctx = this.canvas.getContext("2d");   
+
+    //this.canvasClear();
+    this.tempCtx.clearRect(0, 0, this.tempCanvas.width, this.tempCanvas.height);
+    this.canvasDraw(this.tempCtx, projection);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.globalAlpha = 0.4;
+    this.ctx.drawImage(this.tempCanvas, 0, 0);
+};
+
+//**********************************************************************
+
+function initialize() {
+    isochrone.map = new google.maps.Map(document.getElementById("map_canvas"),{
+	center: new google.maps.LatLng(48.2022923873588, 16.3695630750926),
+	zoom: 11,
+	mapTypeId: google.maps.MapTypeId.ROADMAP,
+    });
+    isochrone.customMapCanvas = new CanvasOverlay(isochrone.map, drawCanvas);
+    google.maps.event.addListener(isochrone.map, "dragend", function() {
+        isochrone.customMapCanvas.draw();
+    });
+//
+//    google.maps.event.addListener(map, "zoom_changed", function() {
+//        customMapCanvas.canvasDraw();
+//    });
+
+
+    isochrone.markerClusterer = new MarkerClusterer(isochrone.map, [],
+						    { gridSize: 60,
+						      minimumClusterSize: 4,
+						      title: "Stops",
+						      ignoreHidden: true,
+						      maxZoom: 13,
+						    });
+
+    loadLineTimes()
+}
+
+function loadLineTimes () {
+    var url = 'lines+times_20140315.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    $.each(line, function (k, v) {
+		if (k != "BEZEICHNUNG") {
+		    if (v == "") {
+			line[k] = 999;
+		    } else {
+			line[k] = parseInt(v);
+		    }
+		}
+	    });
+	    line["ZeitProStation"] = line["Gesamtfahrzeit"] / line["NrStationen"];
+	    isochrone.lineTimes[line["BEZEICHNUNG"]] = line;
+	});
+        //console.log(isochrone.lineTimes);
+	loadStopsStatic();
+    });
+}
+
+function loadStopsStatic () {
+    var url = 'stopsStatic_2014-03-15.json';
+    console.log("loading stopsStatic from " + url);
+    $.ajax({
+        dataType: "json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(data) {
+        //console.log(data);
+	isochrone.stopsStatic = data;
+	$.each(data, function (index, stop) {
+	    var s = new Object;
+	    s.position = new google.maps.LatLng(stop.latlon.lat, stop.latlon.lon);
+	    s.id = stop.id;
+	    s.travelTime = 999;
+	    s.showCircles = false;
+	    s.marker = new google.maps.Marker({
+		position: s.position,
+		//map: isochrone.map,
+		draggable: false,
+		//animation: google.maps.Animation.DROP,
+		title: stop.name,
+		visible: false,
+		icon: {
+		    path: google.maps.SymbolPath.CIRCLE,
+		    scale: 4,
+		},
+	    });
+	    isochrone.markerClusterer.addMarker(s.marker);
+	    isochrone.stops[s.id] = s;
+	});
+	
+	calculateDistances();
+	paintMarker();
+    });
+
+}
+
+function loadLines () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    isochrone.lineId2Name[line["LINIEN_ID"]] = line["BEZEICHNUNG"];
+	    //isochrone.lineName2Id[line["BEZEICHNUNG"]] = line["LINIEN_ID"];
+	    //isochrone.lineType[line["LINIEN_ID"]] = line["VERKEHRSMITTEL"];
+	});
+        //console.log(isochrone.lineName2Id);
+        //console.log(isochrone.lineType);
+        //loadStops();
+	loadStops();
+    });
+}
+
+function loadStops () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv';
+    console.log("loading stops from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(stops) {
+        //console.log(stops);
+	//$.csv.toObjects(stops, { separator: ';' });
+	$.each(stops, function (index, stop) {
+	    var s = new Object;
+	    var sStatic = new Object;
+	    s.position = new google.maps.LatLng(stop.WGS84_LAT,
+						stop.WGS84_LON);
+	    sStatic.latlon = { lat: stop.WGS84_LAT, lon: stop.WGS84_LON };
+	    sStatic.id = stop["HALTESTELLEN_ID"];
+	    s.id = sStatic.id;
+	    sStatic.name = stop["NAME"];
+	    s.travelTime = 999;
+	    s.showCircles = false;
+	    s.marker = new google.maps.Marker({
+		position: s.position,
+		//map: isochrone.map,
+		draggable: false,
+		//animation: google.maps.Animation.DROP,
+		title: s.name,
+		visible: false,
+		icon: {
+		    path: google.maps.SymbolPath.CIRCLE,
+		    scale: 4,
+		},
+	    });
+	    isochrone.markerClusterer.addMarker(s.marker);
+	    sStatic.lines = {};
+	    isochrone.stops[s.id] = s;
+	    isochrone.stopsStatic[sStatic.id] = sStatic;
+	});
+        //console.log(isochrone.stops);
+	loadConnections();
+    });
+}
+
+function loadConnections () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv';
+    console.log("loading connections from " + url);
+    $.ajax({
+        dataType: "text",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(csv) {
+	//$.csv.toObjects(conns, { separator: ';' });
+	//var conns = $.csv.parsers.splitLines(csv, { separator: ';' });
+	var conns = csv.trim().split("\n");
+	//console.log(conns);
+	var firstLine = conns.shift().trim();
+	var knownHeader = '"STEIG_ID";"FK_LINIEN_ID";"FK_HALTESTELLEN_ID";"RICHTUNG";"REIHENFOLGE";"RBL_NUMMER";"BEREICH";"STEIG";"STEIG_WGS84_LAT";"STEIG_WGS84_LON";"STAND"';
+	var l;
+	if (firstLine == knownHeader) {
+	    console.log("connections header matches");
+	    var prevconn;
+	    $.each(conns, function (index, conncsv) {
+		var conn = $.csv.toObjects(firstLine+"\n"+conncsv.trim(), { separator: ';' })[0];
+		//if (index < 10) {
+		    //console.log(index);
+		    //console.log(prevconn);
+		    //console.log(conn);
+		    if (prevconn) {
+			//console.log('"'+prevconn.FK_LINIEN_ID+'" == "'+conn.FK_LINIEN_ID+'": '+(prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID));
+			//console.log('"'+prevconn.RICHTUNG+'" == "'+conn.RICHTUNG+'": '+(prevconn.RICHTUNG == conn.RICHTUNG));
+			//console.log('"'+prevconn.REIHENFOLGE+'" + 1 == "'+conn.REIHENFOLGE+'": '+(parseInt(prevconn.REIHENFOLGE, 10) + 1 == parseInt(conn.REIHENFOLGE)));
+			if (prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID
+			    && prevconn.RICHTUNG == conn.RICHTUNG
+			    && parseInt(prevconn.REIHENFOLGE) + 1 == parseInt(conn.REIHENFOLGE)
+			    && prevconn.FK_HALTESTELLEN_ID != conn.FK_HALTESTELLEN_ID
+			   ) {
+			    //console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+			    l = isochrone.lineId2Name[prevconn.FK_LINIEN_ID];
+			    if (!isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l]) {
+				    isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l] = new Array;
+			    }
+			    isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l].push(conn.FK_HALTESTELLEN_ID);
+			    isochrone.stopsStatic[conn.FK_HALTESTELLEN_ID].rbl = conn.RBL_NUMMER;
+			}
+			//console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+		    }
+		//}
+		prevconn = conn;
+	    });
+	} else {
+	    console.log("connections header mismatch!! '"+knownHeader+"' != '"+firstLine+"'");
+	}
+	calculateDistances();
+	paintMarker();
+    });
+}
+
+function calculateDistances() {
+    console.log("calculating distances...");
+    var stop1, stop2, dist;
+    var stopIds = new Array;
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.distanceTo = new Object;
+	stopIds.push(stop.id);
+    });
+    for (var i = 0; i < stopIds.length; i++) {
+	stop1 = isochrone.stops[stopIds[i]];
+	for (var j = i+1; j < stopIds.length; j++) {
+	    stop2 = isochrone.stops[stopIds[j]];
+	    dist = distance(stop1.position, stop2.position);
+	    stop1.distanceTo[stop2.id] = dist;
+	    stop2.distanceTo[stop1.id] = dist;
+	}
+    }
+    console.log(isochrone);
+}
+
+function paintMarker() {
+
+    isochrone.marker = new google.maps.Marker({
+	position: isochrone.map.getCenter(),
+	map: isochrone.map,
+	draggable: true,
+	animation: google.maps.Animation.DROP,
+	title: '???',
+	//icon: "https://chart.googleapis.com/chart?chst=d_map_pin_letter&chld=*|00ffff|000000",
+    });
+
+    google.maps.event.addListener(isochrone.marker, 'dragstart', dragStart);
+    google.maps.event.addListener(isochrone.marker, 'dragend', dragEnd);
+
+    changeParams();
+
+    $('#WalkingSpeed').change(changeParams);
+    $('#Granularity').change(changeParams);
+    $('#MaxTime').change(changeParams);
+    $('#Variant').change(changeParams);
+
+    console.log("end initialize()");
+} // end initialize()
+
+//**********************************************************************
+function drawCanvas (ctx, projection) {
+    if (! isochrone.marker || ! isochrone.visible) {
+	return;
+    }
+    //console.log("drawing isochrones...");
+    var pos = isochrone.marker.getPosition();
+    var edge = offset(pos, isochrone.radiusDelta, 0);
+    var centerPixel = projection.fromLatLngToContainerPixel(pos);
+    var diffPixel = projection.fromLatLngToContainerPixel(edge);
+    diffPixel.x -= centerPixel.x;
+    diffPixel.y -= centerPixel.y;
+    var radiusPixel = Math.sqrt(diffPixel.x * diffPixel.x + diffPixel.y * diffPixel.y);
+    
+    //console.log(pos, edge, centerPixel, diffPixel, radiusPixel);
+
+ 
+    isochrone.rainbow.setNumberRange(0, isochrone.nrCircles);
+    var p, r, t;
+    for (var c = isochrone.nrCircles-1; c >= 0; c--) {
+	console.log("c", c, "colorbands", isochrone.colorbands[c].length);
+	t = (c+1) * isochrone.Granularity;
+	ctx.globalCompositeOperation = 'source-over';
+	ctx.fillStyle = '#'+isochrone.rainbow.colourAt(c+1);
+	$.each(isochrone.colorbands[c], function(i, stop) {
+	    p = projection.fromLatLngToContainerPixel(stop.position);
+	    if (stop.travelTime <= t) {
+		r = radiusPixel * (t-stop.travelTime) / isochrone.Granularity;
+		ctx.beginPath();
+		ctx.arc(p.x, p.y, r, Math.PI * 2, false);
+		ctx.fill();
+	    } else {
+		console.log("travelTime > t?!", stop, t);
+	    }
+	});
+	if (0) {
+	    ctx.globalCompositeOperation = 'destination-out';
+	    $.each(isochrone.colorbands[c], function(i, stop) {
+		p = projection.fromLatLngToContainerPixel(stop.position);
+		if (stop.travelTime <= t) {
+		    r = radiusPixel * (t-stop.travelTime) / isochrone.Granularity - 3;
+		    if (r > 0) {
+			ctx.beginPath();
+			ctx.arc(p.x, p.y, r, Math.PI * 2, false);
+			ctx.fill();
+		    }
+		}
+	    });
+	}
+	//c = -1; // terminate early
+    }
+}
+
+
+function dragStart () {
+    // make canvas invisible
+    // isochrone.customMapCanvas.canvasClear();
+}
+function dragEnd () {
+    sortStopsByTraveltime();
+    // paint canvas
+    isochrone.customMapCanvas.draw();
+}
+
+function sortStopsByTraveltime() {
+    //$("#debug_canvas").empty();
+    var pos = isochrone.marker.getPosition();
+    var sortedStops = new Array;
+
+    // calculate distance from marker to each stop
+    $.each(isochrone.stops, function (stopId, stop) {
+	var d = distance(pos, stop.position)/1000/isochrone.walkingSpeed*60; // distance in walking minutes
+	stop.travelTime = d;
+	stop.travelLine = undefined;
+	//stop.marker.setVisible(true);
+	stop.marker.title = isochrone.stopsStatic[stop.id].name+" ("+d+")";
+	stop.showCircles = false;
+        sortedStops.push(stop);
+    });
+    // sort by walking time
+    sortedStops.sort(function(a, b) { return a.travelTime - b.travelTime; });
+    isochrone.marker.setTitle("nearest stop: " + sortedStops[0].name);
+
+    console.log("Adjusting fastest connections...");
+    var t;
+    var dt;
+    var connstop;
+    var missingTimes = new Object;
+    var stopStatic;
+    function adjustTravelTimes() {
+	var cnt = 0;
+	$.each(sortedStops, function (i, stop) {
+	    stopStatic = isochrone.stopsStatic[stop.id];
+	    // go through connections
+            $.each(stopStatic.lines, function(lineId, connstops) {
+		t = isochrone.lineTimes[lineId];
+		if (!t) {
+		    //console.log("No time information for line " + lineId + ", using default...")
+		    missingTimes[lineId] = true;
+		    t = isochrone.defaultTimes;
+		}
+		dt = stop.travelTime + t["ZeitProStation"];
+		if (!stop.travelLine || stop.travelLine != lineId) {
+		    dt += t[isochrone.variant]; // add switchover time
+		}
+		// go through all adjacent (connected) stops
+		$.each(connstops, function(j, connstopId) {
+		    connstop = isochrone.stops[connstopId];
+		    //console.log("  Comparing: "+connstop.travelTime+" > "+dt+"? ", connstop);
+		    // check if they can be reached faster via this stop
+		    if (connstop.travelTime > dt) {
+			//console.log("Moving "+connstop.name+ " to "+dt+" minutes...");
+			connstop.travelLine = lineId; // note fastest connection
+			connstop.travelTime = dt; // adjust travel time
+			connstop.marker.title = isochrone.stopsStatic[connstop.id].name+" ("+dt+" via "+connstop.travelLine+")+";
+			connstop.showCircles = true;
+			cnt++;
+		    }
+		});
+            });
+	});
+	console.log(cnt+" left...");
+	return cnt;		      
+    }
+
+    var cnt = 1;
+    // repeat until there are no improvements
+    while (cnt > 0) {
+	cnt = adjustTravelTimes();
+	// re-sort
+	sortedStops.sort(function(a, b) { return a.travelTime - b.travelTime; });
+    }
+    console.log("lines missing time information:", missingTimes);
+
+    var stop1;
+    var stop2;
+    var dist;
+    var cnt = 0;
+    isochrone.colorbands = new Array;
+    for (var c = 0; c <= isochrone.nrCircles; c++) {
+	isochrone.colorbands[c] = new Array;
+	isochrone.colorbands[c][0] = { travelTime: 0, position: pos }; // add default for marker
+    }
+  
+    if(0){  
+	// compare each stop with each other stop (that is farer away)
+	for (var i = 0; sortedStops[i].travelTime < isochrone.maxTime && i < sortedStops.length; i++) {
+	    stop1 = sortedStops[i];
+	    if (stop1.showCircles) {
+		for (var j = i+1; j < sortedStops.length && sortedStops[j].travelTime < isochrone.maxTime; j++) {
+		    stop2 = sortedStops[j];
+		    dist = stop1.distanceTo[stop2.id];
+		    dt = dist/1000/isochrone.walkingSpeed*60;
+		    // check if second stop can be reached faster on foot and disable drawing it
+		    if (stop1.travelTime + dt < stop2.travelTime) {
+			//console.log("Stop "+stop2.name+" covered by "+stop1.name, stop1.travelTime, dt, stop2.travelTime);
+			stop2.marker.title = isochrone.stopsStatic[stop2.id].name+" ("+stop2.travelTime+" via "+stop2.travelLine+")-";
+			stop2.showCircles = false;
+			cnt++;
+		    }
+		}
+	    }
+	}
+	//$("#debug_canvas").append("<br>Ignoring "+cnt+" stops that can be reached faster on foot.<br>");
+	console.log("Ignoring "+cnt+" stops that can be reached faster on foot.");
+    }
+    $.each(sortedStops, function (i, stop) {
+	// determine in which color bands the stop will appear
+	if (stop.showCircles) {
+	    for (var c = Math.floor(stop.travelTime / isochrone.Granularity); c <= isochrone.nrCircles; c++) {
+		isochrone.colorbands[c].push(stop);
+	    }
+	}
+    });
+    console.log(isochrone);
+}
+
+function changeParams() {
+    //console.log(this.name + " is now " + this.value);
+    isochrone.walkingSpeed = parseFloat($('#WalkingSpeed')[0].value);
+    isochrone.Granularity = parseInt($('#Granularity')[0].value);
+    isochrone.maxTime = parseInt($('#MaxTime')[0].value);
+    isochrone.variant = $('#Variant')[0].value;
+    isochrone.radiusDelta = isochrone.walkingSpeed * 1000 * isochrone.Granularity / 60;
+    isochrone.nrCircles = Math.floor(isochrone.maxTime / isochrone.Granularity);
+
+    dragStart();
+    dragEnd();
+}
+
+function hideIsochrones() {
+    isochrone.visible = false;    
+    $("#debug_canvas").append("Isochrones now hidden.<br>");
+    isochrone.customMapCanvas.canvasClear();
+}
+function showIsochrones() {
+    isochrone.visible = true;
+    $("#debug_canvas").append("Isochrones now shown.<br>");
+    isochrone.customMapCanvas.draw();
+}
+
+function hideStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(false);
+    });
+    isochrone.markerClusterer.repaint();
+}
+function showStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(true);
+    });
+    isochrone.markerClusterer.repaint();
+}
+
+</script>
+    </head>
+    <body onload="initialize()">
+      <div id="config_canvas" style="width:300px; height:100%; float:left">
+	<!--<form id="config" onSubmit="return false">-->
+	  Walking speed: <input type="text" id="WalkingSpeed" name="WalkingSpeed" size="2" value="4">km/h 
+	  <nbsp;><nbsp;><nbsp;><nbsp;><br>
+	  Granularity in minutes: 
+	  <select id="Granularity" name="Granularity">
+	    <option value="5">5</option>
+	    <option value="10">10</option>
+	    <option value="15" selected>15</option>
+	  </select>
+	  <nbsp;><nbsp;><nbsp;><nbsp;><br>
+	  Maximum travel time: 
+	  <select id="MaxTime" name="MaxTime">
+	    <option value="30">30</option>
+	    <option value="60" selected>60</option>
+	    <option value="90">90</option>
+	    <option value="120">120</option>
+	  </select>
+	  </br>
+	  Travel parameters:<br>
+	  <select id="Variant" name="Variant">
+	    <option value="MinWT" selected>Minimum Weekday</option>
+	    <option value="MaxWT">Maximum Weekday</option>
+	    <option value="MinWE">Minimum Weekend</option>
+	    <option value="MaxWE">Maximum Weekend</option>
+	    <option value="NightWT">Night Weekday</option>
+	    <option value="NightWE">Night Weekend</option>
+          </select>
+          <br>
+          <button id="showIsochrones" onClick="showIsochrones()">show Isochrones</button>
+          <button id="hideIsochrones" onClick="hideIsochrones()">hide Isochrones</button>
+          <br>
+          <button id="showStopMarkers" onClick="showStopMarkers()">show Stops</button>
+          <button id="hideStopMarkers" onClick="hideStopMarkers()">hide Stops</button>
+          <br>
+	<!--</form>-->
+        <div id="debug_canvas">
+	  Debug log:<br>
+        </div><br>
+      </div>
+      <div id="map_canvas" style="height:100%"></div>
+      <canvas id="tempCanvas" style="display:none;"></canvas>
+    </body>
+</html>

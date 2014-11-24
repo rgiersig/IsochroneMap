@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false&libraries=geometry">
+    </script>
+
+    <script type="text/javascript">
+    // Enable the visual refresh
+    google.maps.visualRefresh = true;
+//console.log(google.maps.geometry.spherical);
+var distance = google.maps.geometry.spherical.computeDistanceBetween;
+
+var isochrone = new Object;
+isochrone.map = null;
+isochrone.circles = new Array;
+isochrone.stops = {};
+isochrone.lineNames = {};
+
+$.ajaxSetup({
+  contents: {
+    csv: /csv/
+  },
+  converters: {
+    "text csv": true,
+    "csv json": function ( result ) {
+      return $.csv.toObjects(result, { separator: ';' });
+    },
+  }
+});
+
+function loadLines () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	//isochrone.lines = $.csv.toObjects(lines, { separator: ';' });
+	$.each(lines, function (index, line) {
+	    isochrone.lineNames[line["LINIEN_ID"]] = line["BEZEICHNUNG"];
+	});
+        console.log(isochrone.lines);
+	loadStops();
+    });
+}
+
+function loadStops () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv';
+    console.log("loading stops from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(stops) {
+        //console.log(stops);
+	//$.csv.toObjects(stops, { separator: ';' });
+	$.each(stops, function (index, stop) {
+	    var s = new Object;
+	    s.position = new google.maps.LatLng(stop.WGS84_LAT,
+						stop.WGS84_LON);
+	    s.id = stop["HALTESTELLEN_ID"];
+	    s.name = stop["NAME"];
+	    s.lines = {};
+	    s.conns = {};
+	    isochrone.stops[s.id] = s;
+	});
+        console.log(isochrone.stops);
+	loadConnections();
+    });
+}
+
+function loadConnections () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv';
+    console.log("loading connections from " + url);
+    $.ajax({
+        dataType: "text",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(csv) {
+	//$.csv.toObjects(conns, { separator: ';' });
+	//var conns = $.csv.parsers.splitLines(csv, { separator: ';' });
+	var conns = csv.trim().split("\n");
+	//console.log(conns);
+	var firstLine = conns.shift().trim();
+	var knownHeader = '"STEIG_ID";"FK_LINIEN_ID";"FK_HALTESTELLEN_ID";"RICHTUNG";"REIHENFOLGE";"RBL_NUMMER";"BEREICH";"STEIG";"STEIG_WGS84_LAT";"STEIG_WGS84_LON";"STAND"';
+	if (firstLine == knownHeader) {
+	    console.log("connections header matches");
+	    var prevconn = null;
+	    $.each(conns, function (index, conncsv) {
+		var conn = $.csv.toObjects(firstLine+"\n"+conncsv.trim(), { separator: ';' })[0];
+		//if (index < 10) {
+		    //console.log(index);
+		    //console.log(prevconn);
+		    //console.log(conn);
+		    if (prevconn != null) {
+			//console.log('"'+prevconn.FK_LINIEN_ID+'" == "'+conn.FK_LINIEN_ID+'": '+(prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID));
+			//console.log('"'+prevconn.RICHTUNG+'" == "'+conn.RICHTUNG+'": '+(prevconn.RICHTUNG == conn.RICHTUNG));
+			//console.log('"'+prevconn.REIHENFOLGE+'" + 1 == "'+conn.REIHENFOLGE+'": '+(parseInt(prevconn.REIHENFOLGE, 10) + 1 == parseInt(conn.REIHENFOLGE)));
+			if (prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID
+			    && prevconn.RICHTUNG == conn.RICHTUNG
+			    && parseInt(prevconn.REIHENFOLGE) + 1 == parseInt(conn.REIHENFOLGE)
+			   ) {
+			    //console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+			    if (isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[prevconn.FK_LINIEN_ID] == null) {
+				    isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[prevconn.FK_LINIEN_ID] = new Array();
+			    }
+			    isochrone.stops[prevconn.FK_HALTESTELLEN_ID].lines[prevconn.FK_LINIEN_ID].push(conn.FK_HALTESTELLEN_ID);
+			    isochrone.stops[prevconn.FK_HALTESTELLEN_ID].conns[conn.FK_HALTESTELLEN_ID]++;
+			}
+			//console.log(isochrone.stops[prevconn.FK_HALTESTELLEN_ID]);
+		    }
+		//}
+		prevconn = conn;
+	    });
+	} else {
+	    console.log("connections header mismatch!! '"+knownHeader+"' != '"+firstLine+"'");
+	}
+        console.log(isochrone.stops);
+	paintIt();
+    });
+}
+
+function initialize() {
+    isochrone.map = new google.maps.Map(document.getElementById("map_canvas"),{
+	center: new google.maps.LatLng(48.206829, 16.376324),
+	zoom: 12,
+	mapTypeId: google.maps.MapTypeId.ROADMAP
+    });
+    //console.log(isochrone.map);
+
+    loadLines()
+}
+
+function paintIt() {
+    console.log("painting stops...");
+    var index = 0;
+    $.each(isochrone.stops, function (stopId, stop) {
+        //if (index > 100) { return; }
+        //console.log(stop);
+        var circle = new google.maps.Circle({
+            clickable: false,
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: '#00FF00',
+            fillOpacity: 0.35,
+            map: isochrone.map,
+            radius: 100, // meter
+            center: stop.position,
+            visible: false,
+            zIndex: index+100,
+        });
+	isochrone.stops[stopId].circle = circle;
+        //isochrone.circles.push(circle);
+	index++;
+    });
+	   
+    //console.log("circles = " + isochrone.circles.length);
+    console.log(isochrone);
+
+    var marker = new google.maps.Marker({
+	position: isochrone.map.getCenter(),
+	map: isochrone.map,
+	draggable: true,
+	animation: google.maps.Animation.DROP,
+	title: '???',
+    });	
+    marker.isochrone_stop = null;
+    google.maps.event.addListener(marker, 'click', findNearestStop);
+    google.maps.event.addListener(marker, 'dragend', findNearestStop);
+    google.maps.event.addListener(marker, 'dragstart', hideStop);
+
+    function hideStop () {
+	//console.log("start drag");
+	if (marker.isochrone_stop != null) {
+	    $.each(marker.isochrone_stop, function (i, s) {
+		s.circle.setVisible(false);
+	    });
+	}
+    }
+    function findNearestStop() {
+	//console.log("finding nearest stop...");
+	var ndist = 999999;
+	var nstop = null;
+	var pos = marker.getPosition();
+	$.each(isochrone.stops, function (stopId, stop) {
+	    var d = distance(pos, stop.position);
+	    if (d < ndist) {
+		ndist = d;
+		nstop = stop;
+	    }
+	});
+	//console.log(nstop);
+	nstop.circle.setVisible(true);
+	marker.isochrone_stop = new Array(nstop);
+	var title = new Array("nearest stop:", nstop.name, "\n",
+			      "lines:");
+	$.each(nstop.lines, function (linenr, conns) {
+	    title.push(isochrone.lineNames[linenr]);
+	});
+	title.push("\n", "connects to:");
+	$.each(nstop.conns, function (conn, cnt) {
+	    title.push(isochrone.stops[conn].name);
+	    isochrone.stops[conn].circle.setVisible(true);
+	    marker.isochrone_stop.push(isochrone.stops[conn]);
+	});
+	
+	marker.setTitle(title.join(" "));
+	
+	//console.log("nearest stop: " + nstop.name);
+    }
+
+    console.log("end initialize()");
+} // end initialize()
+
+//"STEIG_ID";"FK_LINIEN_ID";"FK_HALTESTELLEN_ID";"RICHTUNG";"REIHENFOLGE";"RBL_NUMMER";"BEREICH";"STEIG";"STEIG_WGS84_LAT";"STEIG_WGS84_LON";"STAND"
+//214689583;214433687;214461177;"H";1;"4101";1;"U1-H";48.174363600459;16.3781502143534;"2013-08-12 10:18:58"
+//214689584;214433687;214460771;"H";2;"4103";1;"U1-H";48.1783785153035;16.3763349519996;"2013-08-12 10:18:58"
+//214689585;214433687;214461409;"H";3;"4105";2;"U1-H";48.187233787292;16.3736133157444;"2013-08-12 10:18:58"
+//214689586;214433687;214461422;"H";4;"4107";1;"U1-H";48.1942987123189;16.3701838722601;"2013-08-12 10:18:58"
+//214689587;214433687;214460762;"H";5;"4109";1;"U1-H";48.2015246381873;16.3690851887494;"2013-08-12 10:18:58"
+//214689588;214433687;214461385;"H";6;"4111";1;"U1-H";48.2083106962274;16.3716880582658;"2013-08-12 10:18:58"
+//214689589;214433687;214461276;"H";7;"4113";1;"U1-H";48.2119597546083;16.3778945537635;"2013-08-12 10:18:58"
+//214689590;214433687;214461016;"H";8;"4115";1;"U1-H";48.2153567135419;16.3855888440165;"2013-08-12 10:18:58"
+//214689591;214433687;214461125;"H";9;"4117";3;"U1-H";48.2187570379335;16.3922210943809;"2013-08-12 10:18:58"
+//214689592;214433687;214461487;"H";10;"4119";1;"U1-H";48.2236941098116;16.4011303227388;"2013-08-12 10:18:58"
+//214689593;214433687;214460339;"H";11;"4121";1;"U1H";48.2287695287371;16.4104354324489;"2013-08-12 10:18:58"
+//214689594;214433687;214460746;"H";12;"4123";1;"U1-H";48.2323969232776;16.416040846038;"2013-08-12 10:18:58"
+//214689595;214433687;214460136;"H";13;"4125";1;"U1-H";48.2379419578517;16.4243658461997;"2013-08-12 10:18:58"
+//214689596;214433687;214460732;"H";14;"4127";1;"U1-H";48.243152211973;16.4328044854633;"2013-08-12 10:18:58"
+//214689597;214433687;214460738;"H";15;"4181";1;"1-U1";48.2506639633664;16.4434102799467;"2013-08-12 10:18:58"
+//214689598;214433687;214461888;"H";16;"4182";1;"1-U1";48.2576720676159;16.4496682448851;"2013-08-12 10:18:58"
+//214689599;214433687;214461886;"H";17;"4183";1;"1-U1";48.2637138197927;16.4519539100099;"2013-08-12 10:18:58"
+//214689600;214433687;214461887;"H";18;"4184";1;"1-U1";48.2708654114324;16.4475359353838;"2013-08-12 10:18:58"
+//214689601;214433687;214460873;"H";19;"4185";8;"7";48.2775927367772;16.4525090733354;"2013-08-12 10:18:58"
+//214689626;214433687;214460873;"R";1;"4190";8;"8";48.2777557527307;16.452419384761;"2013-08-12 10:18:58"
+//214689627;214433687;214461887;"R";2;"4189";1;"2-U1";48.2709073093659;16.447779605055;"2013-08-12 10:18:58"
+//214689628;214433687;214461886;"R";3;"4188";1;"2-U1";48.2637362229314;16.4516043369372;"2013-08-12 10:18:58"
+//214689629;214433687;214461888;"R";4;"4187";1;"2-U1";48.2576064180069;16.4498818744778;"2013-08-12 10:18:58"
+//214689630;214433687;214460738;"R";5;"4186";1;"2-U1";48.2505988328467;16.4435835048641;"2013-08-12 10:18:58"
+//214689631;214433687;214460732;"R";6;"4102";1;"U1-R";48.2430606298648;16.4329365670045;"2013-08-12 10:18:58"
+//214689632;214433687;214460136;"R";7;"4104";2;"U1-R";48.2378961716158;16.4244318880654;"2013-08-12 10:18:58"
+//214689633;214433687;214460746;"R";8;"4106";5;"U1-R";48.2324973108042;16.4159224658667;"2013-08-12 10:18:58"
+//214689634;214433687;214460339;"R";9;"4108";1;"U1R";48.2286781372652;16.4105540622642;"2013-08-12 10:18:58"
+//214689635;214433687;214461487;"R";10;"4110";2;"U1-R";48.2236941098116;16.4011303227388;"2013-08-12 10:18:58"
+//214689636;214433687;214461125;"R";11;"4112";3;"U1-R";48.2188392571576;16.3921156634371;"2013-08-12 10:18:58"
+//214689637;214433687;214461016;"R";12;"4114";1;"U1-R";48.2153017965159;16.3856681019831;"2013-08-12 10:18:58"
+//214689638;214433687;214461276;"R";13;"4116";1;"U1-R";48.2119051654824;16.3779469118028;"2013-08-12 10:18:58"
+//214689639;214433687;214461385;"R";14;"4118";1;"U1-R";48.2082641369637;16.3718213633859;"2013-08-12 10:18:58"
+//214689640;214433687;214460762;"R";15;"4120";1;"U1-R";48.2014955825675;16.3692593049535;"2013-08-12 10:18:58"
+//214689641;214433687;214461422;"R";16;"4122";1;"U1-R";48.1942388242604;16.3699267007409;"2013-08-12 10:18:58"
+//214689642;214433687;214461409;"R";17;"4124";2;"U1-R";48.1871994320098;16.3734779030147;"2013-08-12 10:18:58"
+//214689643;214433687;214460771;"R";18;"4126";1;"U1-R";48.1784040378476;16.3764566595779;"2013-08-12 10:18:58"
+//214689644;214433687;214461177;"R";19;"4128";1;"U1-R";48.1743719461191;16.3782042223684;"2013-08-12 10:18:58"
+
+</script>
+    </head>
+    <body onload="initialize()">
+      <div id="map_canvas" style="width:100%; height:100%"></div>
+    </body>
+</html>

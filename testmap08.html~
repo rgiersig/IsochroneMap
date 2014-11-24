@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false&libraries=geometry">
+    </script>
+
+    <script type="text/javascript">
+    // Enable the visual refresh
+    google.maps.visualRefresh = true;
+//console.log(google.maps.geometry.spherical);
+var distance = google.maps.geometry.spherical.computeDistanceBetween;
+
+var isochrone = new Object;
+isochrone.map = null;
+isochrone.circles = new Array;
+isochrone.stops = {};
+isochrone.lines = {};
+
+$.ajaxSetup({
+  contents: {
+    csv: /csv/
+  },
+  converters: {
+    "text csv": true,
+    "csv json": function ( result ) {
+      return $.csv.toObjects(result, { separator: ';' });
+    },
+  }
+});
+
+function initialize() {
+    isochrone.map = new google.maps.Map(document.getElementById("map_canvas"),{
+	center: new google.maps.LatLng(48.206829, 16.376324),
+	zoom: 12,
+	mapTypeId: google.maps.MapTypeId.ROADMAP
+    });
+    console.log(isochrone.map);
+
+    var stopurl = 'http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv';
+    console.log("loading stops from " + stopurl);
+    $.ajax({
+        dataType: "text csv json",
+        url: stopurl,
+        //data: null,
+        async: false,
+    }).done(function(stops) {
+        //console.log(stops);
+	//$.csv.toObjects(stops, { separator: ';' });
+	$.each(stops, function (index, stop) {
+	    var s = new Object;
+	    s.position = new google.maps.LatLng(stop.WGS84_LAT,
+						stop.WGS84_LON);
+	    s.id = stop["HALTESTELLEN_ID"];
+	    s.name = stop["NAME"];
+	    isochrone.stops[s.id] = s;
+	});
+        console.log(isochrone.stops);
+    });
+
+    var lineurl = 'http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv';
+    console.log("loading lines from " + lineurl);
+    $.ajax({
+        dataType: "text csv json",
+        url: lineurl,
+        //data: null,
+        async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	//isochrone.lines = $.csv.toObjects(lines, { separator: ';' });
+	$.each(lines, function (index, line) {
+	    isochrone.lines[line["LINIEN_ID"]] = line["BEZEICHNUNG"];
+	});
+        console.log(isochrone.lines);
+    });
+
+    console.log("painting stops...");
+    var index = 0;
+    $.each(isochrone.stops, function (stopId, stop) {
+        //if (index > 100) { return; }
+        //console.log(stop);
+        var circle = new google.maps.Circle({
+            clickable: false,
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.8,
+            strokeWeight: 2,
+            fillColor: '#FF00FF',
+            fillOpacity: 0.35,
+            map: isochrone.map,
+            radius: 100, // meter
+            center: stop.position,
+            visible: true,
+            zIndex: index+100,
+        });
+        isochrone.circles.push(circle);
+	index++;
+    });
+	   
+    console.log("circles = " + isochrone.circles.length);
+    console.log(isochrone.map);
+
+    var marker = new google.maps.Marker({
+	position: isochrone.map.getCenter(),
+	map: isochrone.map,
+	draggable: true,
+	animation: google.maps.Animation.DROP,
+	title: '???',
+    });
+    google.maps.event.addListener(marker, 'click', findNearestStop);
+    google.maps.event.addListener(marker, 'dragend', findNearestStop);
+
+    function calculateWeight() {
+	console.log("setting weight...");
+	var wsum = 0;
+	var pos = marker.getPosition();
+	$.each(isochrone.stops, function (stopId, stop) {
+	    wsum += distance(pos, stop.position);
+	});
+	marker.setTitle("weight = " + wsum);
+    }
+
+    function findNearestStop() {
+	console.log("finding nearest stop...");
+	var ndist = 999999;
+	var nstop = null;
+	var pos = marker.getPosition();
+	$.each(isochrone.stops, function (stopId, stop) {
+	    var d = distance(pos, stop.position);
+	    if (d < ndist) {
+		ndist = d;
+		nstop = stop;
+	    }
+	});
+	marker.setTitle("nearest stop: " + nstop.name);
+    }
+
+    console.log("end initialize()");
+} // end initialize()
+</script>
+    </head>
+    <body onload="initialize()">
+      <div id="map_canvas" style="width:100%; height:100%"></div>
+    </body>
+</html>

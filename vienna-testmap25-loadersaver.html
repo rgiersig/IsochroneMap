@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<!--
+https://open.wien.at/site/datensatz/?id=add66f20-d033-4eee-b9a0-47019828e698
+http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv
+http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv
+https://github.com/anomal/RainbowVis-JS
+http://eligrey.com/demos/FileSaver.js/
+-->
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <style type="text/css">
+      html { height: 100% }
+      body { height: 100%; margin: 0; padding: 0 }
+      #map_canvas { height: 100% }
+    .GMAPS_OVERLAY {
+	border-width: 0px;
+	border: none;
+	position:absolute;
+	padding:0px 0px 0px 0px;
+	margin:0px 0px 0px 0px;
+    }
+    </style>
+     <script type="text/javascript"
+       src="http://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js">
+    </script>
+     <script type="text/javascript"
+       src="https://jquery-csv.googlecode.com/files/jquery.csv-0.71.min.js">
+    </script>
+    <script type="text/javascript"
+      src="http://maps.googleapis.com/maps/api/js?key=AIzaSyDxYsN5pBlnYn4noxdsLLWyo4QbI5XmLIE&sensor=false&libraries=geometry,visualisation">
+    </script>
+    <!--<script type="text/javascript"
+      src="https://rawgithub.com/anomal/RainbowVis-JS/master/rainbowvis.js">
+    </script>-->
+    <!--<script type="text/javascript"
+      src="http://rgiersig.github.io/IsochroneMap/rainbowvis.js">
+    </script>-->
+    <script type="text/javascript"
+      src="rainbowvis.js">
+    </script>
+    <script type="text/javascript"
+      src="http://google-maps-utility-library-v3.googlecode.com/svn/tags/markerclustererplus/2.0.9/src/markerclusterer_packed.js">
+    </script>
+    <script type="application/ecmascript" async="" src="Blob.js"></script>
+    <script type="application/ecmascript" async="" src="FileSaver.js"></script>
+
+<script type="text/javascript">
+    // Enable the visual refresh
+    google.maps.visualRefresh = true;
+
+var distance = google.maps.geometry.spherical.computeDistanceBetween;
+var offset = google.maps.geometry.spherical.computeOffset;
+
+var isochrone = new Object;
+isochrone.map = null;
+isochrone.markerClusterer = null;
+isochrone.stopsStatic = {};
+isochrone.stops = {};
+isochrone.lineId2Name = {};
+isochrone.lineName2Id = {};
+isochrone.lineTimes = {};
+isochrone.defaultTimes = {BEZEICHNUNG: "default",
+			  Gesamtfahrzeit: 2,
+			  NrStationen: 1,
+			  MinWT: 5,
+			  MaxWT: 10,
+			  MinWE: 10,
+			  MaxWE: 15,
+			  NightWT: 999,
+			  NightWE: 999,
+			 };
+isochrone.lineType = {};
+
+$.ajaxSetup({
+  contents: {
+    csv: /csv/
+  },
+  converters: {
+    "text csv": true,
+    "csv json": function ( result ) {
+      return $.csv.toObjects(result, { separator: ';' });
+    },
+  }
+});
+
+
+//**********************************************************************
+
+function initialize() {
+    isochrone.map = new google.maps.Map(document.getElementById("map_canvas"),{
+	center: new google.maps.LatLng(48.2022923873588, 16.3695630750926),
+	zoom: 11,
+	mapTypeId: google.maps.MapTypeId.ROADMAP,
+    });
+
+    isochrone.markerClusterer = new MarkerClusterer(isochrone.map, [],
+						    { gridSize: 60,
+						      minimumClusterSize: 4,
+						      title: "Stops",
+						      ignoreHidden: true,
+						      maxZoom: 13,
+						    });
+
+    loadLines()
+}
+
+function loadLines () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-linien.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    isochrone.lineId2Name[line["LINIEN_ID"]] = line["BEZEICHNUNG"];
+	    //isochrone.lineName2Id[line["BEZEICHNUNG"]] = line["LINIEN_ID"];
+	    //isochrone.lineType[line["LINIEN_ID"]] = line["VERKEHRSMITTEL"];
+	});
+        //console.log(isochrone.lineName2Id);
+        //console.log(isochrone.lineType);
+        //loadStops();
+	loadLineTimes();
+    });
+}
+
+function loadLineTimes () {
+    var url = 'lines+times_20140315.csv';
+    console.log("loading lines from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(lines) {
+        //console.log(lines);
+	$.each(lines, function (index, line) {
+	    $.each(line, function (k, v) {
+		if (k != "BEZEICHNUNG") {
+		    if (v == "") {
+			line[k] = 999;
+		    } else {
+			line[k] = parseInt(v);
+		    }
+		}
+	    });
+	    line["ZeitProStation"] = line["Gesamtfahrzeit"] / line["NrStationen"];
+	    isochrone.lineTimes[line["BEZEICHNUNG"]] = line;
+	});
+        //console.log(isochrone.lineTimes);
+	loadStops();
+    });
+}
+
+function loadStops () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv';
+    console.log("loading stops from " + url);
+    $.ajax({
+        dataType: "text csv json",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(stops) {
+        //console.log(stops);
+	//$.csv.toObjects(stops, { separator: ';' });
+	$.each(stops, function (index, stop) {
+	    var s = new Object;
+	    var sStatic = new Object;
+	    s.position = new google.maps.LatLng(stop.WGS84_LAT,
+						stop.WGS84_LON);
+	    sStatic.latlon = { lat: stop.WGS84_LAT, lon: stop.WGS84_LON };
+	    sStatic.id = stop["HALTESTELLEN_ID"];
+	    //sStatic.position = s.position;
+	    s.id = sStatic.id;
+	    sStatic.name = stop["NAME"];
+	    s.travelTime = 999;
+	    s.showCircles = false;
+	    s.marker = new google.maps.Marker({
+		position: s.position,
+		//map: isochrone.map,
+		draggable: false,
+		//animation: google.maps.Animation.DROP,
+		title: sStatic.name,
+		visible: false,
+		icon: {
+		    path: google.maps.SymbolPath.CIRCLE,
+		    scale: 4,
+		    strokeColor: 'black',
+		},
+	    });
+	    isochrone.markerClusterer.addMarker(s.marker);
+	    sStatic.lines = {};
+	    isochrone.stops[s.id] = s;
+	    isochrone.stopsStatic[sStatic.id] = sStatic;
+	});
+        //console.log(isochrone.stops);
+	loadConnections();
+    });
+}
+
+function loadConnections () {
+    var url = 'http://data.wien.gv.at/csv/wienerlinien-ogd-steige.csv';
+    console.log("loading connections from " + url);
+    $.ajax({
+        dataType: "text",
+        url: url,
+        //data: null,
+        //async: false,
+    }).done(function(csv) {
+	//$.csv.toObjects(conns, { separator: ';' });
+	//var conns = $.csv.parsers.splitLines(csv, { separator: ';' });
+	var conns = csv.trim().split("\n");
+	//console.log(conns);
+	var firstLine = conns.shift().trim();
+	var knownHeader = '"STEIG_ID";"FK_LINIEN_ID";"FK_HALTESTELLEN_ID";"RICHTUNG";"REIHENFOLGE";"RBL_NUMMER";"BEREICH";"STEIG";"STEIG_WGS84_LAT";"STEIG_WGS84_LON";"STAND"';
+	var l;
+	if (firstLine == knownHeader) {
+	    console.log("connections header matches");
+	    var prevconn;
+	    $.each(conns, function (index, conncsv) {
+		var conn = $.csv.toObjects(firstLine+"\n"+conncsv.trim(), { separator: ';' })[0];
+		if (prevconn) {
+		    if (prevconn.FK_LINIEN_ID == conn.FK_LINIEN_ID
+			&& prevconn.RICHTUNG == conn.RICHTUNG
+			&& parseInt(prevconn.REIHENFOLGE) + 1 == parseInt(conn.REIHENFOLGE)
+			&& prevconn.FK_HALTESTELLEN_ID != conn.FK_HALTESTELLEN_ID
+		       ) {
+			l = isochrone.lineId2Name[prevconn.FK_LINIEN_ID];
+			if (!isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l]) {
+			    isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l] = new Array;
+			}
+			isochrone.stopsStatic[prevconn.FK_HALTESTELLEN_ID].lines[l].push(conn.FK_HALTESTELLEN_ID);
+		    }
+		}
+		isochrone.stopsStatic[conn.FK_HALTESTELLEN_ID].rbl = conn.RBL_NUMMER;
+		prevconn = conn;
+	    });
+	} else {
+	    console.log("connections header mismatch!! '"+knownHeader+"' != '"+firstLine+"'");
+	}
+if(0){
+	console.log("calculating distances...");
+	var stop1, stop2, dist;
+	var stopIds = new Array;
+	$.each(isochrone.stopsStatic, function(stopId, stop) {
+	    stop.distanceTo = new Object;
+	    stopIds.push(stop.id);
+	});
+	for (var i = 0; i < stopIds.length; i++) {
+	    stop1 = isochrone.stops[stopIds[i]];
+	    for (var j = i+1; j < stopIds.length; j++) {
+		stop2 = isochrone.stops[stopIds[j]];
+		dist = distance(stop1.position, stop2.position);
+		stop1.distanceTo[stop2.id] = dist;
+		stop2.distanceTo[stop1.id] = dist;
+	    }
+	}
+}
+	var d = JSON.stringify(isochrone.stopsStatic);
+	$("#debug_div").append("stopsStatic has "+d.length+" bytes.<br>");
+	//$("#dataToSave").val(d);
+	$("#saveFilename").val("stopsStatic_"+(new Date()).toJSON()+".json");
+	console.log("end initialize()");
+    });
+} // end initialize()
+
+function saveData() {
+    var fn = $("#saveFilename").val();
+    var d = JSON.stringify(isochrone.stopsStatic);
+    console.log("saving "+d.length+" bytes of data to "+fn+"...");
+    saveAs(
+	new Blob([d], {type: "application/json;charset=" + document.characterSet})
+	, fn
+    );
+}
+function hideStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(false);
+    });
+    isochrone.markerClusterer.repaint();
+}
+function showStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	stop.marker.setVisible(true);
+	if (Object.keys(isochrone.stopsStatic[stopId].lines).length < 1) {
+	    stop.marker.icon.strokeColor = 'red';
+	}
+    });
+    isochrone.markerClusterer.repaint();
+}
+function showUnconnectedStopMarkers() {
+    $.each(isochrone.stops, function(stopId, stop) {
+	if (Object.keys(isochrone.stopsStatic[stopId].lines).length < 1) {
+	    stop.marker.setVisible(true);
+	}
+    });
+    isochrone.markerClusterer.repaint();
+}
+
+</script>
+    </head>
+    <body onload="initialize()">
+      <div id="config_canvas" style="height:100%; float:left">
+	<!--<form id="config" onSubmit="return false">-->
+          <button id="showStopMarkersButton" onClick="showStopMarkers()">show Stops</button>
+          <button id="hideStopMarkersButton" onClick="hideStopMarkers()">hide Stops</button>
+          <br>
+	<!--</form>-->
+        <textarea id="dataToSave" rows="20" cols="60"></textarea>
+        <br>
+        <input type="text" id="saveFilename" placeholder="stopsStatic.js" style="width:300px">
+        <button id="saveDataButton" onclick="saveData()">Save</button>
+        <br>
+
+        <div id="debug_div">
+	  Debug log:<br>
+        </div><br>
+      </div>
+      <div id="map_canvas" style="height:100%"></div>
+    </body>
+</html>
